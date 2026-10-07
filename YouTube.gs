@@ -35,9 +35,13 @@ function runYouTube_(sheet, ctx) {
       const videoId = v.id && v.id.videoId;
       if (!videoId || seenVideos[videoId]) return;
       seenVideos[videoId] = true;
-      const title = (v.snippet && v.snippet.title) || '';
+      const title = ytDecode_((v.snippet && v.snippet.title) || '');
+      const channelTitle = ytDecode_((v.snippet && v.snippet.channelTitle) || '');
       const creatorChannel = v.snippet && v.snippet.channelId;
-      const videoBrand = detectBrand_(title) || brand.name;
+      // Brand from the video title or channel name. If neither names a brand, a comment is kept only
+      // when the comment itself names one (search results often include loosely related videos).
+      const videoBrand = detectBrand_(title + ' ' + channelTitle);
+      let skippedOffTopic = 0;
 
       let threads;
       try {
@@ -58,11 +62,13 @@ function runYouTube_(sheet, ctx) {
         const date = new Date(s.publishedAt);
         if (date < cutoff) return;
         if (s.authorChannelId && s.authorChannelId.value === creatorChannel) return; // creator's own comment
+        const commentBrand = detectBrand_(s.textOriginal) || videoBrand;
+        if (!commentBrand) { skippedOffTopic++; return; }
         items.push(makeRow_({
           id: 'youtube:' + c.id,
           source: 'YouTube',
           channel: ytTrim_(title, 80),
-          brand: detectBrand_(s.textOriginal) || videoBrand,
+          brand: commentBrand,
           kind: 'comment',
           date: date,
           url: 'https://www.youtube.com/watch?v=' + videoId + '&lc=' + c.id,
@@ -70,6 +76,9 @@ function runYouTube_(sheet, ctx) {
           text: s.textOriginal,
         }));
       });
+      if (skippedOffTopic) {
+        ctx.notes.push(skippedOffTopic + ' comments skipped on "' + ytTrim_(title, 40) + '" (no brand in title, channel or comment)');
+      }
     });
   });
   return { items: items.filter(Boolean) };
@@ -88,6 +97,11 @@ function ytGet_(endpoint, params, ctx) {
     return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
   }).join('&');
   return fetchJson_(YT_BASE + endpoint + '?' + q + '&key=' + encodeURIComponent(prop_('YOUTUBE_API_KEY')), {}, ctx);
+}
+
+/** Search results return HTML-escaped titles (&amp;, &#39;); turn them back into plain text. */
+function ytDecode_(s) {
+  return s.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 }
 
 function ytTrim_(s, n) {

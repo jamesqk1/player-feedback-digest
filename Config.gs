@@ -70,7 +70,7 @@ const CONFIG = {
 
   trustpilot: {                  // via DataForSEO
     enabled: true,
-    depth: 100,                  // most recent reviews requested per brand (max 200; charged per 20)
+    depth: 200,                  // most recent reviews requested per brand (max 200; charged per 20)
   },
 
   youtube: {
