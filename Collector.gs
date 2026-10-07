@@ -1,217 +1,101 @@
 /**
- * Player Feedback Digest: Reddit collector (Google Apps Script).
+ * Player Feedback Digest: collector entry points and shared helpers (Google Apps Script).
  *
- * Read-only. Uses application-only OAuth (no user login, no account acting on Reddit).
- * Each weekly run:
- *   1. deletes rows collected more than CONFIG.retentionDays ago
- *   2. re-checks stored items and deletes any that were deleted or removed on Reddit
- *   3. collects new posts and comments that mention a configured brand
- *   4. appends them to the Raw tab (no usernames stored; u/ mentions redacted)
- *   5. writes a line to the Run log tab
+ * Each weekly run, for every source:
+ *   1. deletes rows older than that source's retention period
+ *   2. (Reddit) deletes rows whose post or comment was deleted or removed on Reddit
+ *   3. collects new items that mention a configured brand
+ *   4. appends them to the Raw tab: no author names or handles stored, @/u/ mentions and emails redacted
+ *   5. writes one line per source to the Run log tab
  *
  * Functions to run by hand from the editor:
- *   testConnection()      check credentials and reach Reddit (2 requests)
- *   runWeekly()           one full run
- *   setupWeeklyTrigger()  schedule runWeekly every Monday around 6am (script time zone)
+ *   testSources()            check each source's keys and reach it (a few requests each)
+ *   postTrustpilotTasks()    ask DataForSEO for the latest Trustpilot reviews (results ready minutes later)
+ *   runWeekly()              one full run (collects any Trustpilot results that are ready)
+ *   setupWeeklyTriggers()    Mondays: postTrustpilotTasks around 5am, runWeekly around 6am (script time zone)
  */
 
 const RAW_HEADERS = [
-  'item_id', 'source', 'subreddit', 'brand', 'kind', 'post_date',
-  'url', 'score', 'text', 'collected_at', 'welfare_check',
+  'item_id', 'source', 'channel', 'brand', 'kind', 'post_date', 'url',
+  'rating', 'score', 'text', 'collected_at', 'welfare_check',
 ];
-const LOG_HEADERS = ['run_at', 'requests', 'added', 'removed_deleted', 'removed_expired', 'errors'];
-const REMOVED_MARKERS = ['[deleted]', '[removed]'];
+const LOG_HEADERS = ['run_at', 'source', 'requests', 'added', 'removed_deleted', 'removed_expired', 'notes'];
+const COL = RAW_HEADERS.reduce(function (m, h, i) { m[h] = i; return m; }, {});
 
 /* ---------- Entry points ---------- */
 
 function runWeekly() {
-  const ctx = { requests: 0, errors: [] };
-  const startedAt = new Date();
-  let added = 0;
-  let removedDeleted = 0;
-  let removedExpired = 0;
+  const runAt = new Date();
+  const sheet = getOrCreateSheet_(CONFIG.sheetName, RAW_HEADERS);
+  const sources = [
+    { name: 'Reddit', run: runReddit_ },
+    { name: 'App Store', run: runAppStore_ },
+    { name: 'Trustpilot', run: runTrustpilot_ },
+    { name: 'YouTube', run: runYouTube_ },
+  ];
 
-  try {
-    const sheet = getOrCreateSheet_(CONFIG.sheetName, RAW_HEADERS);
-    removedExpired = purgeExpired_(sheet);
-    const token = redditToken_(ctx);
-    removedDeleted = syncDeletions_(sheet, token, ctx);
-    const items = collectReddit_(token, ctx);
-    added = appendNew_(sheet, items);
-  } catch (e) {
-    ctx.errors.push(errorText_(e));
-  }
-
-  logRun_(startedAt, ctx, added, removedDeleted, removedExpired);
-  console.log('Run complete: ' + ctx.requests + ' requests, ' + added + ' added, ' +
-    removedDeleted + ' removed (deleted on Reddit), ' + removedExpired + ' removed (expired).');
-  if (ctx.errors.length) console.error(ctx.errors.join('\n'));
+  sources.forEach(function (src) {
+    const ctx = newCtx_(src.name);
+    let added = 0;
+    let removedDeleted = 0;
+    const removedExpired = purgeExpired_(sheet, src.name);
+    try {
+      const result = src.run(sheet, ctx) || {};
+      removedDeleted = result.removedDeleted || 0;
+      added = appendNew_(sheet, result.items || []);
+    } catch (e) {
+      ctx.notes.push(errorText_(e));
+    }
+    logRun_(runAt, src.name, ctx, added, removedDeleted, removedExpired);
+    console.log(src.name + ': ' + ctx.requests + ' requests, ' + added + ' added, ' + removedDeleted +
+      ' removed (deleted at source), ' + removedExpired + ' removed (expired). ' + ctx.notes.join(' | '));
+  });
 }
 
-function testConnection() {
-  const ctx = { requests: 0, errors: [] };
-  const token = redditToken_(ctx);
-  const sub = CONFIG.reddit.subreddits[0].name;
-  const listing = redditGet_('/r/' + sub + '/new', { limit: 5, raw_json: 1 }, token, ctx);
-  console.log('Connected. Read ' + listingChildren_(listing).length + ' recent posts from r/' + sub +
-    ' using ' + ctx.requests + ' requests.');
+function testSources() {
+  [testReddit_, testAppStore_, testTrustpilot_, testYouTube_].forEach(function (fn) {
+    try { console.log(fn()); } catch (e) { console.error(errorText_(e)); }
+  });
 }
 
-function setupWeeklyTrigger() {
+function setupWeeklyTriggers() {
   ScriptApp.getProjectTriggers()
-    .filter(function (t) { return t.getHandlerFunction() === 'runWeekly'; })
+    .filter(function (t) { return ['runWeekly', 'postTrustpilotTasks'].indexOf(t.getHandlerFunction()) !== -1; })
     .forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('runWeekly').timeBased()
-    .onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(6).create();
-  console.log('Weekly trigger set: Mondays around 6am (' + Session.getScriptTimeZone() + ').');
+  ScriptApp.newTrigger('postTrustpilotTasks').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(5).create();
+  ScriptApp.newTrigger('runWeekly').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(6).create();
+  console.log('Weekly triggers set for Mondays (' + Session.getScriptTimeZone() + '): ' +
+    'postTrustpilotTasks around 5am, runWeekly around 6am.');
 }
 
-/* ---------- Reddit API ---------- */
+/* ---------- Shared helpers ---------- */
 
-function redditToken_(ctx) {
-  const props = PropertiesService.getScriptProperties();
-  const id = props.getProperty('REDDIT_CLIENT_ID');
-  const secret = props.getProperty('REDDIT_CLIENT_SECRET');
-  if (!id || !secret) {
-    throw new Error('Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in Project Settings > Script properties.');
-  }
-  const res = UrlFetchApp.fetch('https://www.reddit.com/api/v1/access_token', {
-    method: 'post',
-    payload: { grant_type: 'client_credentials' },
-    headers: {
-      Authorization: 'Basic ' + Utilities.base64Encode(id + ':' + secret),
-      'User-Agent': userAgent_(),
-    },
-    muteHttpExceptions: true,
-  });
-  ctx.requests++;
-  if (res.getResponseCode() !== 200) {
-    throw new Error('Reddit auth failed: HTTP ' + res.getResponseCode());
-  }
-  return JSON.parse(res.getContentText()).access_token;
+function newCtx_(source) {
+  return { source: source, requests: 0, notes: [] };
 }
 
-function userAgent_() {
-  const user = PropertiesService.getScriptProperties().getProperty('REDDIT_USERNAME') || 'unknown';
-  return 'google-apps-script:player-feedback-digest:v0.2 (by /u/' + user + ')';
+function prop_(key) {
+  return PropertiesService.getScriptProperties().getProperty(key);
 }
 
-/** GET from the OAuth API. Throws on HTTP errors; returns null once the request cap is reached. */
-function redditGet_(path, params, token, ctx) {
-  if (ctx.requests >= CONFIG.maxRequestsPerRun) {
-    const msg = 'Request cap reached (' + CONFIG.maxRequestsPerRun + '); remaining calls skipped.';
-    if (ctx.errors.indexOf(msg) === -1) ctx.errors.push(msg);
-    return null;
-  }
-  const query = Object.keys(params || {})
-    .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
-    .join('&');
-  Utilities.sleep(CONFIG.requestDelayMs);
-  const res = UrlFetchApp.fetch('https://oauth.reddit.com' + path + (query ? '?' + query : ''), {
-    headers: { Authorization: 'Bearer ' + token, 'User-Agent': userAgent_() },
-    muteHttpExceptions: true,
-  });
+function hasProps_(keys) {
+  return keys.every(function (k) { return !!prop_(k); });
+}
+
+/** HTTP request that records the call, returns parsed JSON, and throws on non-2xx. */
+function fetchJson_(url, options, ctx) {
+  const opts = Object.assign({ muteHttpExceptions: true }, options || {});
+  const res = UrlFetchApp.fetch(url, opts);
   ctx.requests++;
   const code = res.getResponseCode();
-  if (code !== 200) throw new Error('GET ' + path + ' failed: HTTP ' + code);
-  return JSON.parse(res.getContentText());
-}
-
-/** Like redditGet_, but records errors and returns null so one failed call doesn't stop the run. */
-function safeGet_(path, params, token, ctx) {
-  try {
-    return redditGet_(path, params, token, ctx);
-  } catch (e) {
-    ctx.errors.push(errorText_(e));
-    return null;
+  const body = res.getContentText();
+  if (code < 200 || code >= 300) {
+    const err = new Error(ctx.source + ' HTTP ' + code + ' for ' + url.split('?')[0]);
+    err.code = code;
+    err.body = body;
+    throw err;
   }
-}
-
-function listingChildren_(listing) {
-  if (!listing || !listing.data || !listing.data.children) return [];
-  return listing.data.children.map(function (c) { return c.data; });
-}
-
-/* ---------- Collection ---------- */
-
-function collectReddit_(token, ctx) {
-  const cutoff = Date.now() / 1000 - CONFIG.lookbackDays * 86400;
-  const posts = {}; // fullname -> { p, brand }
-
-  CONFIG.reddit.subreddits.forEach(function (sub) {
-    const listing = safeGet_('/r/' + sub.name + '/new', { limit: 100, raw_json: 1 }, token, ctx);
-    listingChildren_(listing).forEach(function (p) {
-      if (p.created_utc < cutoff || skipThing_(p)) return;
-      const brand = detectBrand_(postText_(p)) || sub.defaultBrand;
-      if (brand) posts[p.name] = { p: p, brand: brand };
-    });
-  });
-
-  CONFIG.reddit.searchQueries.forEach(function (q) {
-    const listing = safeGet_('/search',
-      { q: q, sort: 'new', t: 'month', limit: 100, type: 'link', raw_json: 1 }, token, ctx);
-    listingChildren_(listing).forEach(function (p) {
-      if (posts[p.name] || p.created_utc < cutoff || skipThing_(p)) return;
-      const brand = detectBrand_(postText_(p)); // search matches loosely, so require a keyword
-      if (brand) posts[p.name] = { p: p, brand: brand };
-    });
-  });
-
-  const items = [];
-  const entries = Object.keys(posts).map(function (k) { return posts[k]; });
-
-  entries.forEach(function (e) {
-    const item = toItem_(e.p, 'post', e.brand, postText_(e.p), e.p.subreddit);
-    if (item) items.push(item);
-  });
-
-  entries
-    .filter(function (e) { return e.p.num_comments > 0; })
-    .sort(function (a, b) { return b.p.num_comments - a.p.num_comments; })
-    .slice(0, CONFIG.reddit.maxPostsForComments)
-    .forEach(function (e) {
-      const data = safeGet_('/comments/' + e.p.id,
-        { limit: CONFIG.reddit.maxCommentsPerPost, depth: 3, sort: 'new', raw_json: 1 }, token, ctx);
-      if (!data || !data[1]) return;
-      flattenComments_(data[1]).forEach(function (c) {
-        if (c.created_utc < cutoff || skipThing_(c)) return;
-        const brand = detectBrand_(c.body) || e.brand;
-        const item = toItem_(c, 'comment', brand, c.body, e.p.subreddit);
-        if (item) items.push(item);
-      });
-    });
-
-  return items;
-}
-
-function postText_(p) {
-  return [p.title || '', p.selftext || ''].join('\n\n').trim();
-}
-
-/** Skip mod/bot posts and anything already deleted or removed. Author is checked here but never stored. */
-function skipThing_(t) {
-  if (t.stickied || t.distinguished || t.author === 'AutoModerator') return true;
-  return isGone_(t);
-}
-
-function isGone_(t) {
-  if (t.removed_by_category) return true;
-  if (t.author === '[deleted]') return true;
-  const body = (t.name && t.name.indexOf('t1_') === 0) ? t.body : t.selftext;
-  return REMOVED_MARKERS.indexOf((body || '').trim()) !== -1;
-}
-
-function flattenComments_(listing) {
-  const out = [];
-  (function walk(node) {
-    if (!node || !node.data || !node.data.children) return;
-    node.data.children.forEach(function (child) {
-      if (child.kind !== 't1') return; // skips "load more" stubs
-      out.push(child.data);
-      if (child.data.replies) walk(child.data.replies);
-    });
-  })(listing);
-  return out;
+  return JSON.parse(body);
 }
 
 /** Brand whose keyword appears earliest in the text, or null. */
@@ -228,11 +112,12 @@ function detectBrand_(text) {
   return best;
 }
 
-/** Remove usernames and email addresses from text. */
+/** Remove email addresses, @handles and u/usernames from text. */
 function redact_(text) {
   return (text || '')
-    .replace(/(^|[^A-Za-z0-9_])\/?u\/[A-Za-z0-9_-]{3,20}/g, '$1[user]')
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]');
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .replace(/(^|[^A-Za-z0-9_])@[A-Za-z0-9_.-]{2,30}/g, '$1[user]')
+    .replace(/(^|[^A-Za-z0-9_])\/?u\/[A-Za-z0-9_-]{3,20}/g, '$1[user]');
 }
 
 function wordCount_(text) {
@@ -240,57 +125,25 @@ function wordCount_(text) {
   return words[0] === '' ? 0 : words.length;
 }
 
-function toItem_(thing, kind, brand, rawText, subreddit) {
-  let text = redact_(rawText).trim();
+/**
+ * Build a Raw row, or null if the text is too short.
+ * f: { id, source, channel, brand, kind, date (Date), url, rating, score, text, welfare }
+ */
+function makeRow_(f) {
+  let text = redact_(f.text).trim();
   if (wordCount_(text) < CONFIG.minWords) return null;
   if (text.length > CONFIG.maxTextChars) text = text.slice(0, CONFIG.maxTextChars) + ' […]';
   return [
-    thing.name,                                         // item_id (t3_ = post, t1_ = comment)
-    'Reddit',
-    subreddit || thing.subreddit,
-    brand,
-    kind,
-    new Date(thing.created_utc * 1000).toISOString().slice(0, 10),
-    'https://www.reddit.com' + thing.permalink,
-    thing.score,
-    text,
-    new Date().toISOString(),
-    'N',                                                // welfare check never runs on Reddit data
+    f.id, f.source, f.channel || '', f.brand, f.kind,
+    f.date.toISOString().slice(0, 10), f.url || '',
+    f.rating === undefined || f.rating === null ? '' : f.rating,
+    f.score === undefined || f.score === null ? '' : f.score,
+    text, new Date().toISOString(), f.welfare === false ? 'N' : 'Y',
   ];
 }
 
-/* ---------- Retention and deletion sync ---------- */
-
-function purgeExpired_(sheet) {
-  const cutoff = Date.now() - CONFIG.retentionDays * 86400 * 1000;
-  const col = RAW_HEADERS.indexOf('collected_at');
-  return rewriteRows_(sheet, function (row) {
-    const t = new Date(row[col]).getTime();
-    return isNaN(t) || t >= cutoff;
-  });
-}
-
-/** Re-check every stored Reddit item; delete rows whose item is deleted, removed or no longer returned. */
-function syncDeletions_(sheet, token, ctx) {
-  const rows = dataRows_(sheet);
-  const idCol = RAW_HEADERS.indexOf('item_id');
-  const srcCol = RAW_HEADERS.indexOf('source');
-  const ids = rows.filter(function (r) { return r[srcCol] === 'Reddit'; })
-    .map(function (r) { return String(r[idCol]); });
-  if (!ids.length) return 0;
-
-  const gone = {};
-  for (let i = 0; i < ids.length; i += 100) {
-    const batch = ids.slice(i, i + 100);
-    const res = safeGet_('/api/info', { id: batch.join(','), raw_json: 1 }, token, ctx);
-    if (!res) continue; // unknown status: keep the rows rather than guess
-    const alive = {};
-    listingChildren_(res).forEach(function (t) { if (!isGone_(t)) alive[t.name] = true; });
-    batch.forEach(function (id) { if (!alive[id]) gone[id] = true; });
-  }
-  return rewriteRows_(sheet, function (row) {
-    return !(row[srcCol] === 'Reddit' && gone[String(row[idCol])]);
-  });
+function lookbackCutoff_() {
+  return new Date(Date.now() - CONFIG.lookbackDays * 86400 * 1000);
 }
 
 /* ---------- Sheet helpers ---------- */
@@ -323,13 +176,22 @@ function rewriteRows_(sheet, keep) {
   return removed;
 }
 
+function purgeExpired_(sheet, source) {
+  const days = CONFIG.retentionDays[source] || 90;
+  const cutoff = Date.now() - days * 86400 * 1000;
+  return rewriteRows_(sheet, function (row) {
+    if (row[COL.source] !== source) return true;
+    const t = new Date(row[COL.collected_at]).getTime();
+    return isNaN(t) || t >= cutoff;
+  });
+}
+
 function appendNew_(sheet, items) {
-  const idCol = RAW_HEADERS.indexOf('item_id');
   const seen = {};
-  dataRows_(sheet).forEach(function (r) { seen[String(r[idCol])] = true; });
+  dataRows_(sheet).forEach(function (r) { seen[String(r[COL.item_id])] = true; });
   const fresh = items.filter(function (it) {
-    if (seen[it[idCol]]) return false;
-    seen[it[idCol]] = true;
+    if (!it || seen[it[COL.item_id]]) return false;
+    seen[it[COL.item_id]] = true;
     return true;
   });
   if (fresh.length) {
@@ -338,10 +200,10 @@ function appendNew_(sheet, items) {
   return fresh.length;
 }
 
-function logRun_(startedAt, ctx, added, removedDeleted, removedExpired) {
+function logRun_(runAt, source, ctx, added, removedDeleted, removedExpired) {
   const log = getOrCreateSheet_(CONFIG.logSheetName, LOG_HEADERS);
-  log.appendRow([startedAt.toISOString(), ctx.requests, added, removedDeleted, removedExpired,
-    ctx.errors.join(' | ')]);
+  log.appendRow([runAt.toISOString(), source, ctx.requests, added, removedDeleted, removedExpired,
+    ctx.notes.join(' | ')]);
 }
 
 function errorText_(e) {
