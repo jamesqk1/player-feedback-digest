@@ -40,7 +40,7 @@ function redditToken_(ctx) {
 }
 
 function redditUserAgent_() {
-  return 'google-apps-script:player-feedback-digest:v0.3 (by /u/' + (prop_('REDDIT_USERNAME') || 'unknown') + ')';
+  return 'google-apps-script:player-feedback-digest:v0.4 (by /u/' + (prop_('REDDIT_USERNAME') || 'unknown') + ')';
 }
 
 /** GET from the OAuth API. Returns null once the request cap is reached. */

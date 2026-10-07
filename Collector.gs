@@ -10,9 +10,9 @@
  *
  * Functions to run by hand from the editor:
  *   testSources()            check each source's keys and reach it (a few requests each)
- *   postTrustpilotTasks()    ask DataForSEO for the latest Trustpilot reviews (results ready minutes later)
- *   runWeekly()              one full run (collects any Trustpilot results that are ready)
- *   setupWeeklyTriggers()    Mondays: postTrustpilotTasks around 5am, runWeekly around 6am (script time zone)
+ *   postDataForSEOTasks()    ask DataForSEO for the latest Trustpilot and App Store reviews (ready minutes later)
+ *   runWeekly()              one full run (collects any DataForSEO results that are ready)
+ *   setupWeeklyTriggers()    Mondays: postDataForSEOTasks around 5am, runWeekly around 6am (script time zone)
  */
 
 const RAW_HEADERS = [
@@ -53,19 +53,21 @@ function runWeekly() {
 }
 
 function testSources() {
-  [testReddit_, testAppStore_, testTrustpilot_, testYouTube_].forEach(function (fn) {
+  [testReddit_, testDataForSEO_, testYouTube_].forEach(function (fn) {
     try { console.log(fn()); } catch (e) { console.error(errorText_(e)); }
   });
 }
 
 function setupWeeklyTriggers() {
   ScriptApp.getProjectTriggers()
-    .filter(function (t) { return ['runWeekly', 'postTrustpilotTasks'].indexOf(t.getHandlerFunction()) !== -1; })
+    .filter(function (t) {
+      return ['runWeekly', 'postTrustpilotTasks', 'postDataForSEOTasks'].indexOf(t.getHandlerFunction()) !== -1;
+    })
     .forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('postTrustpilotTasks').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(5).create();
+  ScriptApp.newTrigger('postDataForSEOTasks').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(5).create();
   ScriptApp.newTrigger('runWeekly').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(6).create();
   console.log('Weekly triggers set for Mondays (' + Session.getScriptTimeZone() + '): ' +
-    'postTrustpilotTasks around 5am, runWeekly around 6am.');
+    'postDataForSEOTasks around 5am, runWeekly around 6am.');
 }
 
 /* ---------- Shared helpers ---------- */
@@ -90,7 +92,12 @@ function fetchJson_(url, options, ctx) {
   const code = res.getResponseCode();
   const body = res.getContentText();
   if (code < 200 || code >= 300) {
-    const err = new Error(ctx.source + ' HTTP ' + code + ' for ' + url.split('?')[0]);
+    let detail = '';
+    try {
+      const j = JSON.parse(body);
+      detail = j.status_message || (j.error && j.error.message) || j.message || '';
+    } catch (x) { /* not JSON */ }
+    const err = new Error(ctx.source + ' HTTP ' + code + ' for ' + url.split('?')[0] + (detail ? ': ' + detail : ''));
     err.code = code;
     err.body = body;
     throw err;

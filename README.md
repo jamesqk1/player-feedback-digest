@@ -4,6 +4,8 @@ A personal, non-commercial proof of concept: turning public player feedback from
 
 This repository holds the **collector**: a small Google Apps Script that gathers public reviews, posts and comments once a week into a private Google Sheet. Classification and the weekly summary happen in a separate step.
 
+It is part of a personal learning project, the **AI Marketing Intelligence Lab**, where it is the collector for workflow 01, **Customer Intelligence (CI)**. Related private files follow the pattern `CI – <test case> – <item>`; the Apps Script project is named `CI – Chumba – Collector`.
+
 ## How it works
 
 ```
@@ -14,12 +16,14 @@ Public sources ──► Collector (this repo, weekly) ──► Private Google 
 
 | Source | Access | Keys needed | Status |
 |---|---|---|---|
-| App Store reviews | Apple's public customer-reviews feed | None | Live |
+| App Store reviews | DataForSEO App Data API (third-party provider) | DataForSEO login | Live |
 | Trustpilot reviews | DataForSEO Business Data API (third-party provider) | DataForSEO login | Live |
 | YouTube comments | YouTube Data API v3, read-only | API key | Live |
 | Reddit posts and comments | Reddit Data API, read-only, application-only OAuth | Reddit app | Awaiting API approval |
 
 A source with no keys is skipped and noted in the Run log, so sources can be switched on one at a time.
+
+Apple's free public review feed was tried first, but it returns an empty list when called from Google's servers, so App Store reviews come through DataForSEO instead.
 
 ## Data handling
 
@@ -45,8 +49,9 @@ Reddit, additionally (to stay inside Reddit's [Responsible Builder Policy](https
 |---|---|
 | `Config.gs` | What to collect: brands, per-source IDs, subreddits, search terms, limits, retention |
 | `Collector.gs` | Entry points (`runWeekly`, `testSources`, `setupWeeklyTriggers`) and shared helpers: redaction, sheet writing, retention, run log |
-| `AppStore.gs` | App Store reviews |
-| `Trustpilot.gs` | Trustpilot reviews via DataForSEO (two steps: post tasks, then collect results) |
+| `DataForSEO.gs` | Shared DataForSEO plumbing: posts review tasks, collects results when ready, logs cost |
+| `AppStore.gs` | App Store reviews (via DataForSEO) |
+| `Trustpilot.gs` | Trustpilot reviews (via DataForSEO) |
 | `YouTube.gs` | YouTube comments on recent videos about each brand |
 | `Reddit.gs` | Reddit posts and comments, plus deletion sync |
 | `appsscript.json` | Apps Script manifest (time zone, minimal permissions) |
@@ -65,8 +70,8 @@ Reddit, additionally (to stay inside Reddit's [Responsible Builder Policy](https
    - `YOUTUBE_API_KEY`
    - `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`
 5. Run `testSources` to check each source. On first run, Google asks you to authorise the script.
-6. Run `postTrustpilotTasks`, wait a few minutes, then run `runWeekly`.
-7. Run `setupWeeklyTriggers` to schedule it: `postTrustpilotTasks` around 5am and `runWeekly` around 6am every Monday.
+6. Run `postDataForSEOTasks`, wait a few minutes, then run `runWeekly`.
+7. Run `setupWeeklyTriggers` to schedule it: `postDataForSEOTasks` around 5am and `runWeekly` around 6am every Monday.
 
 Each run writes one line per source to the **Run log** tab: requests made, rows added, rows removed and any notes.
 
@@ -74,4 +79,4 @@ Each run writes one line per source to the **Run log** tab: requests made, rows 
 
 ## Status
 
-Early proof of concept (v0.3). The analysis method was first validated by hand on a 45-item sample before automating collection.
+Early proof of concept (v0.4). The analysis method was first validated by hand on a 45-item sample before automating collection.

@@ -4,10 +4,9 @@
  * Edit this file to change what is collected.
  * Secrets do NOT go here. Set them in Project Settings > Script properties.
  * A source whose keys are missing is skipped (and noted in the Run log), so you can add sources one at a time.
- *   Reddit:      REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME
- *   Trustpilot:  DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD
- *   YouTube:     YOUTUBE_API_KEY
- *   App Store:   no keys needed (Apple's public review feed)
+ *   Reddit:                  REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME
+ *   Trustpilot, App Store:   DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD
+ *   YouTube:                 YOUTUBE_API_KEY
  */
 const CONFIG = {
   sheetName: 'Raw',          // tab the collector writes to (created if missing)
@@ -61,15 +60,17 @@ const CONFIG = {
     maxCommentsPerPost: 50,
   },
 
-  appStore: {
+  appStore: {                    // via DataForSEO
     enabled: true,
-    country: 'us',
-    maxPages: 5,                 // 50 reviews per page, newest first; stops early once past the lookback window
+    country: 'us',               // used in review links
+    locationCode: 2840,          // DataForSEO location code for the United States
+    languageCode: 'en',
+    depth: 200,                  // most recent reviews requested per brand (max 500; charged per 25)
   },
 
-  trustpilot: {
+  trustpilot: {                  // via DataForSEO
     enabled: true,
-    depth: 100,                  // most recent reviews requested per brand (max 200)
+    depth: 100,                  // most recent reviews requested per brand (max 200; charged per 20)
   },
 
   youtube: {
