@@ -24,7 +24,7 @@ The Reddit collector is designed to stay well inside Reddit's [Responsible Build
 
 - **Read-only.** No posting, commenting, voting or messaging. No bot account. Application-only OAuth, so no user account acts on Reddit.
 - **Small and slow.** One run a week, a hard cap of 90 requests per run, and a 1-second pause between requests.
-- **Narrow scope.** New posts from two subreddits plus a keyword search, filtered to a few configured topics. See `src/Config.gs`.
+- **Narrow scope.** New posts from two subreddits plus a keyword search, filtered to a few configured topics. See `Config.gs`.
 - **No usernames.** Authors are never stored. `u/` mentions and email addresses in text are redacted before saving.
 - **Minimal fields.** Text, score, date and permalink only.
 - **90-day retention.** Rows are deleted 90 days after collection.
@@ -37,15 +37,15 @@ The Reddit collector is designed to stay well inside Reddit's [Responsible Build
 
 | File | Purpose |
 |---|---|
-| `src/Config.gs` | What to collect: subreddits, search terms, topic keywords, limits |
-| `src/Collector.gs` | The collector: auth, collection, redaction, retention, deletion sync, run log |
-| `src/appsscript.json` | Apps Script manifest (time zone, minimal permissions) |
+| `Config.gs` | What to collect: subreddits, search terms, topic keywords, limits |
+| `Collector.gs` | The collector: auth, collection, redaction, retention, deletion sync, run log |
+| `appsscript.json` | Apps Script manifest (time zone, minimal permissions) |
 
 ## Setup
 
 1. Open the Google Sheet, then **Extensions → Apps Script**.
-2. Create two script files, `Config.gs` and `Collector.gs`, and paste in the contents from `src/`.
-3. Optional: in **Project Settings**, tick "Show appsscript.json manifest file" and paste in `src/appsscript.json` to limit the script's permissions.
+2. Create two script files, `Config.gs` and `Collector.gs`, and paste in their contents from this repo.
+3. Optional: in **Project Settings**, tick "Show appsscript.json manifest file" and paste in `appsscript.json` to limit the script's permissions.
 4. In **Project Settings → Script properties**, add `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USERNAME`.
 5. Run `testConnection` to check access. On first run, Google asks you to authorise the script.
 6. Run `runWeekly` once by hand, then `setupWeeklyTrigger` to schedule it for Monday mornings.
