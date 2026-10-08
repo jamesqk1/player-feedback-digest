@@ -134,11 +134,13 @@ function wordCount_(text) {
 
 /**
  * Build a Raw row, or null if the text is too short.
- * f: { id, source, channel, brand, kind, date (Date), url, rating, score, text, welfare }
+ * f: { id, source, channel, brand, kind, date (Date), url, rating, score, text, countText, welfare }
+ * countText (optional): the part of the text that counts towards CONFIG.minWords, e.g. a review body without its title.
  */
 function makeRow_(f) {
   let text = redact_(f.text).trim();
-  if (wordCount_(text) < CONFIG.minWords) return null;
+  const counted = f.countText !== undefined ? redact_(f.countText) : text;
+  if (wordCount_(counted) < CONFIG.minWords) return null;
   if (text.length > CONFIG.maxTextChars) text = text.slice(0, CONFIG.maxTextChars) + ' […]';
   return [
     f.id, f.source, f.channel || '', f.brand, f.kind,

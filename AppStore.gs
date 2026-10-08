@@ -18,6 +18,7 @@ function runAppStore_(sheet, ctx) {
       url: 'https://apps.apple.com/' + CONFIG.appStore.country + '/app/id' + appId + '?see-all=reviews',
       rating: r.rating && r.rating.value,
       text: [r.title || '', r.review_text || ''].join('\n\n'),
+      countText: r.review_text || '',   // a short title shouldn't lift a short review over the minimum
     });
   });
 }

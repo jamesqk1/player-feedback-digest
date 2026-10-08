@@ -16,6 +16,7 @@ function runTrustpilot_(sheet, ctx) {
       rating: r.rating && r.rating.value,
       score: r.rating && r.rating.votes_count,
       text: [r.title || '', r.review_text || ''].join('\n\n'),
+      countText: r.review_text || '',   // titles often repeat the start of the review
     });
   });
 }
